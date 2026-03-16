@@ -1,0 +1,14 @@
+{
+  "+221771616286_pollution_high_2025-08-16": {
+    "timestamp": "2025-08-16T14:52:26.592193",
+    "parent": "CALIXTE  Pape",
+    "child": "Seynabou Diop",
+    "message": "🚨 ALERTE École Primaire Mamadou Calixte Dia\nAir très pollué pour Seynabou Diop\nPM2.5: 6000.0µg/m³\nSu..."
+  },
+  "+221771616286_co2_high_2025-08-16": {
+    "timestamp": "2025-08-16T14:52:27.265398",
+    "parent": "CALIXTE  Pape",
+    "child": "Seynabou Diop",
+    "message": "💨 École Primaire Mamadou Calixte Dia\nCO2 élevé classe de Seynabou Diop\n90000 ppm\nPossible fatigue/co..."
+  }
+}
