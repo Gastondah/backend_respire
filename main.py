@@ -60,9 +60,9 @@ CACHE_TTL     = int(os.getenv("CACHE_TTL", "120"))   # secondes
 
 SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER     = os.getenv("SMTP_USER", "")
+SMTP_USER     = os.getenv("SMTP_USER", "houngbocalixte@gmail.com")
 SMTP_PASS     = os.getenv("SMTP_PASS", "")
-ALERT_EMAIL   = os.getenv("ALERT_EMAIL", "respire@breath4life.org")
+ALERT_EMAIL   = os.getenv("ALERT_EMAIL", "houngbocalixte@gmail.com")
 
 # Seuils OMS/EPA utilisés dans votre functions.py (VALEURS_LIMITE)
 VALEURS_LIMITE = {
