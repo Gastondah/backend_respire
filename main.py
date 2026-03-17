@@ -22,9 +22,7 @@ except ImportError:
     pass
 import logging
 import httpx
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+# smtplib non utilisé (Railway bloque SMTP) — remplacé par Resend HTTP API
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from typing import Optional, List, Dict, Any
@@ -58,11 +56,16 @@ AG_TOKEN      = os.getenv("AIRGRADIENT_TOKEN", "2122a271-e910-4ad8-acb8-5a24e764
 AG_BASE_URL   = "https://api.airgradient.com/public/api/v1"
 CACHE_TTL     = int(os.getenv("CACHE_TTL", "120"))   # secondes
 
-SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER     = os.getenv("SMTP_USER", "")
-SMTP_PASS     = os.getenv("SMTP_PASS", "")
-ALERT_EMAIL   = os.getenv("ALERT_EMAIL", "respire@breath4life.org")
+# ─── Email via Resend API (HTTP — pas de SMTP bloqué) ────────────────────────
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")          # clé API Resend
+ALERT_EMAIL    = os.getenv("ALERT_EMAIL", "")              # email destinataire
+ALERT_FROM     = os.getenv("ALERT_FROM", "RESPiRE <onboarding@resend.dev>")
+
+# Fallback SMTP (si configuré)
+SMTP_HOST  = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT  = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER  = os.getenv("SMTP_USER", "")
+SMTP_PASS  = os.getenv("SMTP_PASS", "")
 
 # Seuils OMS/EPA utilisés dans votre functions.py (VALEURS_LIMITE)
 VALEURS_LIMITE = {
@@ -652,13 +655,49 @@ async def get_place():
 
 @app.post("/alert")
 async def send_alert(req: AlertRequest):
-    """Envoie un email d'alerte pollution."""
+    """Envoie un email d'alerte pollution via Resend API (HTTP)."""
+    logger.info(f"📨 Alerte reçue — école: {req.school}")
+    logger.info(f"   RESEND_API_KEY: {'✅ configuré' if RESEND_API_KEY else '❌ VIDE'}")
+    logger.info(f"   ALERT_EMAIL: {ALERT_EMAIL or '❌ VIDE'}")
     try:
-        _send_email(req)
+        await _send_email_resend(req)
+        logger.info("✅ Email envoyé avec succès")
         return {"success": True, "message": "Alerte envoyée avec succès"}
     except Exception as e:
-        logger.error(f"Erreur email : {e}")
-        raise HTTPException(500, "Impossible d'envoyer l'alerte")
+        logger.error(f"❌ Erreur email : {type(e).__name__}: {e}")
+        raise HTTPException(500, f"Erreur email: {str(e)}")
+
+@app.get("/test-email")
+async def test_email():
+    """Diagnostic de la config email — ouvrir dans le navigateur."""
+    config = {
+        "RESEND_API_KEY": "✅ configuré" if RESEND_API_KEY else "❌ VIDE",
+        "ALERT_EMAIL":    ALERT_EMAIL or "❌ VIDE",
+        "ALERT_FROM":     ALERT_FROM,
+        "SMTP_USER":      "✅ " + SMTP_USER[:3] + "***" if SMTP_USER else "❌ VIDE",
+    }
+    if not RESEND_API_KEY:
+        return {
+            "status": "❌ RESEND_API_KEY manquant",
+            "config": config,
+            "fix": "1) Créer un compte sur resend.com  2) Créer une API Key  3) Ajouter RESEND_API_KEY dans Railway Variables",
+        }
+    if not ALERT_EMAIL:
+        return {
+            "status": "❌ ALERT_EMAIL manquant",
+            "config": config,
+            "fix": "Ajouter ALERT_EMAIL dans Railway Variables (ex: tonmail@gmail.com)",
+        }
+    # Test d'envoi réel
+    try:
+        req_test = AlertRequest(
+            school="Test RESPiRE",
+            description="Ceci est un email de test automatique."
+        )
+        await _send_email_resend(req_test)
+        return {"status": "✅ Email test envoyé avec succès", "to": ALERT_EMAIL, "config": config}
+    except Exception as e:
+        return {"status": f"❌ Échec: {type(e).__name__}: {str(e)}", "config": config}
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -695,75 +734,87 @@ def _generate_mock_history(school_id: str, hours: int) -> List[Dict]:
         })
     return history
 
-def _send_email(req: AlertRequest) -> None:
+async def _send_email_resend(req: AlertRequest) -> None:
+    """Envoie un email via l'API HTTP Resend — fonctionne même si SMTP est bloqué."""
     has_photo = bool(req.photo_base64)
-    photo_info = f"Photo : {'Oui (' + (req.photo_filename or 'photo') + ')' if has_photo else 'Non'}"
+    now_str   = datetime.now().strftime('%d/%m/%Y à %H:%M')
 
-    if not SMTP_USER:
+    # Mode DEV : pas de clé → juste logger
+    if not RESEND_API_KEY:
         logger.info(f"""
 ═══════════════════════════════════
 📧 ALERTE RESPiRE [DEV — pas d'envoi réel]
 École      : {req.school}
 Description: {req.description}
-{photo_info}
-Heure      : {datetime.now().strftime('%d/%m/%Y %H:%M')}
+Photo      : {'Oui' if has_photo else 'Non'}
+Heure      : {now_str}
+🔧 Pour activer : ajouter RESEND_API_KEY dans Railway Variables
 ═══════════════════════════════════""")
         return
 
-    # Email avec pièce jointe photo si présente
-    msg = MIMEMultipart("mixed")
-    msg["Subject"] = f"🚨 Alerte pollution — {req.school}"
-    msg["From"]    = SMTP_USER
-    msg["To"]      = ALERT_EMAIL
+    if not ALERT_EMAIL:
+        raise ValueError("ALERT_EMAIL non configuré dans Railway Variables")
 
-    # Corps HTML
-    photo_section = ""
+    # Corps HTML de l'email
+    photo_html = ""
     if has_photo:
-        photo_section = f"""
-        <p><strong>📷 Photo jointe :</strong> {req.photo_filename or 'photo.jpg'}</p>
-        <img src="cid:alert_photo" style="max-width:100%;border-radius:8px;margin-top:10px;" alt="Photo de la pollution">
-        """
+        photo_html = f"""
+        <p style="margin-top:16px">
+          <strong>📷 Photo :</strong> {req.photo_filename or 'photo.jpg'}<br>
+          <em style="color:#666;font-size:12px">(image en pièce jointe)</em>
+        </p>"""
 
-    html = f"""
+    html_body = f"""
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#FF5722;color:white;padding:20px;border-radius:10px 10px 0 0;">
         <h2 style="margin:0">🚨 Alerte Pollution — RESPiRE</h2>
       </div>
-      <div style="padding:20px;background:#f9f9f9;border:1px solid #ddd;">
+      <div style="padding:20px;background:#f9f9f9;border:1px solid #ddd;border-radius:0 0 4px 4px;">
         <p><strong>École :</strong> {req.school}</p>
-        <p><strong>Date :</strong> {datetime.now().strftime('%d/%m/%Y à %H:%M')}</p>
+        <p><strong>Date :</strong> {now_str}</p>
         <p><strong>Description :</strong></p>
-        <blockquote style="border-left:4px solid #FF5722;padding-left:12px;margin:0;">
+        <blockquote style="border-left:4px solid #FF5722;padding-left:12px;margin:0;color:#333;">
           {req.description}
         </blockquote>
-        {photo_section}
+        {photo_html}
       </div>
-      <div style="padding:12px;background:#00897B;color:white;border-radius:0 0 10px 10px;text-align:center;">
+      <div style="padding:12px;background:#00897B;color:white;border-radius:0 0 10px 10px;text-align:center;font-size:13px;">
         RESPiRE • Breath4Life • Hackathon KAIKAI 2025
       </div>
     </div>"""
 
-    alt_part = MIMEMultipart("alternative")
-    alt_part.attach(MIMEText(html, "html"))
-    msg.attach(alt_part)
+    # Préparer attachments (photo en base64)
+    attachments = []
+    if has_photo and req.photo_base64:
+        attachments.append({
+            "filename": req.photo_filename or "photo.jpg",
+            "content":  req.photo_base64,
+        })
 
-    # Attacher la photo si présente
-    if has_photo:
-        from email.mime.image import MIMEImage
-        try:
-            img_data = base64.b64decode(req.photo_base64)
-            img = MIMEImage(img_data)
-            img.add_header("Content-ID", "<alert_photo>")
-            img.add_header("Content-Disposition", "inline",
-                           filename=req.photo_filename or "photo.jpg")
-            msg.attach(img)
-        except Exception as e:
-            logger.warning(f"Impossible d'attacher la photo : {e}")
+    # Appel API Resend (HTTP — pas SMTP)
+    payload = {
+        "from":        ALERT_FROM,
+        "to":          [ALERT_EMAIL],
+        "subject":     f"🚨 Alerte pollution — {req.school}",
+        "html":        html_body,
+    }
+    if attachments:
+        payload["attachments"] = attachments
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as srv:
-        srv.starttls()
-        srv.login(SMTP_USER, SMTP_PASS)
-        srv.sendmail(SMTP_USER, ALERT_EMAIL, msg.as_string())
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type":  "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code not in (200, 201):
+        raise ValueError(f"Resend API error {resp.status_code}: {resp.text}")
+
+    logger.info(f"📧 Email envoyé via Resend → {ALERT_EMAIL} (id: {resp.json().get('id', '?')})")
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
