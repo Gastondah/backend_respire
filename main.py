@@ -768,5 +768,5 @@ Heure      : {datetime.now().strftime('%d/%m/%Y %H:%M')}
 # ─── Run ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import os, uvicorn
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 8080))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
