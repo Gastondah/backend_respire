@@ -60,9 +60,9 @@ CACHE_TTL     = int(os.getenv("CACHE_TTL", "120"))   # secondes
 
 SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER     = os.getenv("SMTP_USER", "houngbocalixte@gmail.com")
+SMTP_USER     = os.getenv("SMTP_USER", "")
 SMTP_PASS     = os.getenv("SMTP_PASS", "")
-ALERT_EMAIL   = os.getenv("ALERT_EMAIL", "houngbocalixte@gmail.com")
+ALERT_EMAIL   = os.getenv("ALERT_EMAIL", "respire@breath4life.org")
 
 # Seuils OMS/EPA utilisés dans votre functions.py (VALEURS_LIMITE)
 VALEURS_LIMITE = {
@@ -653,12 +653,59 @@ async def get_place():
 @app.post("/alert")
 async def send_alert(req: AlertRequest):
     """Envoie un email d'alerte pollution."""
+    logger.info(f"📨 Alerte reçue — école: {req.school} | SMTP_USER: {'✅ ' + SMTP_USER[:4] + '***' if SMTP_USER else '❌ VIDE'}")
     try:
         _send_email(req)
+        logger.info("✅ Email envoyé avec succès")
         return {"success": True, "message": "Alerte envoyée avec succès"}
     except Exception as e:
-        logger.error(f"Erreur email : {e}")
-        raise HTTPException(500, "Impossible d'envoyer l'alerte")
+        logger.error(f"❌ Erreur email : {type(e).__name__}: {e}")
+        raise HTTPException(500, f"Impossible d'envoyer l'alerte: {type(e).__name__}: {str(e)}")
+
+@app.get("/test-email")
+async def test_email():
+    """Test d'envoi email — ouvrir dans le navigateur pour vérifier la config SMTP."""
+    config = {
+        "SMTP_HOST":   SMTP_HOST,
+        "SMTP_PORT":   SMTP_PORT,
+        "SMTP_USER":   SMTP_USER[:4] + "***" + SMTP_USER[-4:] if len(SMTP_USER) > 8 else ("✅ configuré" if SMTP_USER else "❌ VIDE"),
+        "SMTP_PASS":   "✅ configuré" if SMTP_PASS else "❌ VIDE",
+        "ALERT_EMAIL": ALERT_EMAIL,
+    }
+    if not SMTP_USER or not SMTP_PASS:
+        return {
+            "status": "❌ SMTP non configuré",
+            "config": config,
+            "fix": "Ajouter SMTP_USER, SMTP_PASS, ALERT_EMAIL dans les Variables Railway",
+        }
+    # Tenter un vrai envoi test
+    try:
+        import smtplib as _smtp
+        with _smtp.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as srv:
+            srv.ehlo()
+            srv.starttls()
+            srv.ehlo()
+            srv.login(SMTP_USER, SMTP_PASS)
+            srv.sendmail(
+                SMTP_USER,
+                ALERT_EMAIL,
+                f"Subject: Test RESPiRE
+From: {SMTP_USER}
+To: {ALERT_EMAIL}
+
+Test email RESPiRE OK",
+            )
+        return {"status": "✅ Email test envoyé avec succès", "to": ALERT_EMAIL, "config": config}
+    except Exception as e:
+        return {
+            "status": f"❌ Échec: {type(e).__name__}: {str(e)}",
+            "config": config,
+            "solutions": {
+                "SMTPAuthenticationError": "Mot de passe d'application Gmail incorrect. Générer un nouveau sur myaccount.google.com > Sécurité > Mots de passe d'application",
+                "SMTPConnectError": "Impossible de se connecter à smtp.gmail.com — vérifier SMTP_HOST et SMTP_PORT",
+                "TimeoutError": "Timeout — Railway bloque peut-être le port 587. Essayer port 465 avec SSL",
+            }
+        }
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -767,6 +814,5 @@ Heure      : {datetime.now().strftime('%d/%m/%Y %H:%M')}
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import os, uvicorn
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
