@@ -795,7 +795,7 @@ Heure      : {now_str}
     payload = {
         "from":        ALERT_FROM,
         "to":          [ALERT_EMAIL],
-        "subject":     f"🚨 Alerte pollution — {req.school}",
+        "subject":     f"ALERTE POLLUTION Projet de Mesure de la Qualité de l'air",
         "html":        html_body,
     }
     if attachments:
